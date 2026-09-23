@@ -6,6 +6,7 @@
   "mixins": [
     "ext.BlockStateSerializerMixin",
     "ext.ItemTranslatorMixin",
+    "ext.MinecraftLocaleMixin",
     "ext.MinecraftResourcePackReaderImplMixin",
     "ext.ModelSerializerMixin"
   ],
