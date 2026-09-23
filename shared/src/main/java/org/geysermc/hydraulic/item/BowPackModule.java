@@ -6,6 +6,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.BowItem;
 import org.geysermc.hydraulic.pack.PackModule;
+import team.unnamed.creative.item.Item;
 import org.geysermc.hydraulic.pack.TexturePackModule;
 import org.geysermc.hydraulic.pack.context.PackPostProcessContext;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
@@ -48,6 +49,7 @@ public class BowPackModule extends TexturePackModule<BowPackModule> {
             put("wield_first_person_pull", "animation.bow.wield_first_person_pull");
         }
     };
+    private static final List<String> PULLING_TEXTURES = List.of("bow_pulling_0", "bow_pulling_1", "bow_pulling_2");
     private static final Scripts ATTACHABLE_SCRIPTS = new Scripts();
 
     static {
@@ -103,35 +105,44 @@ public class BowPackModule extends TexturePackModule<BowPackModule> {
 
             textures.put("default", defaultOutputLoc);
 
-            for (ItemOverride override : model.overrides()) {
-                Model pullingModel = assets.model(override.model());
-                if (pullingModel == null) {
-                    context.logger().warn("Bow pulling model {} has no model, skipping", override.model());
-                    continue;
-                }
+            // Where the draw frames live depends on how old the pack is. Since
+            // 1.21.4 they are in the item definition; before that they were
+            // overrides on the model, which is still what an older pack ships.
+            Item itemDefinition = assets.item(Key.key(bowLocation.getNamespace(), bowLocation.getPath()));
+            List<Key> frames = itemDefinition == null ? List.of() : ItemModels.frames(itemDefinition.model());
 
-                List<ModelTexture> pullingLayers = pullingModel.textures().layers();
-                if (pullingLayers == null || pullingLayers.isEmpty()) {
-                    context.logger().warn("Bow pulling model {} has no layer0 texture, skipping", override.model());
-                    continue;
-                }
-
-                ModelTexture pullingLayer0 = pullingLayers.getFirst();
-                String outputLoc = getOutputFromModel(context, pullingLayer0.key()).replace(".png", "");
-
-                Map<String, Float> predicate = new HashMap<>();
-                for (ItemPredicate itemPredicate : override.predicate()) {
-                    if (itemPredicate.value() instanceof Number number) {
-                        predicate.put(itemPredicate.name(), number.floatValue());
+            if (!frames.isEmpty()) {
+                for (int frame = 0; frame < frames.size() && frame < PULLING_TEXTURES.size(); frame++) {
+                    String outputLoc = getOutputFromModelTexture(context, assets, frames.get(frame));
+                    if (outputLoc == null) {
+                        context.logger().warn("Bow pulling model {} has no layer0 texture, skipping", frames.get(frame));
+                        continue;
                     }
-                }
 
-                if (!predicate.containsKey("pull") || predicate.get("pull") == 0f) {
-                    textures.put("bow_pulling_0", outputLoc);
-                } else if (predicate.get("pull") == 0.65f) {
-                    textures.put("bow_pulling_1", outputLoc);
-                } else if (predicate.get("pull") == 0.9f) {
-                    textures.put("bow_pulling_2", outputLoc);
+                    textures.put(PULLING_TEXTURES.get(frame), outputLoc);
+                }
+            } else {
+                for (ItemOverride override : model.overrides()) {
+                    String outputLoc = getOutputFromModelTexture(context, assets, override.model());
+                    if (outputLoc == null) {
+                        context.logger().warn("Bow pulling model {} has no layer0 texture, skipping", override.model());
+                        continue;
+                    }
+
+                    Map<String, Float> predicate = new HashMap<>();
+                    for (ItemPredicate itemPredicate : override.predicate()) {
+                        if (itemPredicate.value() instanceof Number number) {
+                            predicate.put(itemPredicate.name(), number.floatValue());
+                        }
+                    }
+
+                    if (!predicate.containsKey("pull") || predicate.get("pull") == 0f) {
+                        textures.put("bow_pulling_0", outputLoc);
+                    } else if (predicate.get("pull") == 0.65f) {
+                        textures.put("bow_pulling_1", outputLoc);
+                    } else if (predicate.get("pull") == 0.9f) {
+                        textures.put("bow_pulling_2", outputLoc);
+                    }
                 }
             }
 
