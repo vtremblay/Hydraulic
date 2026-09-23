@@ -44,9 +44,11 @@ import org.geysermc.hydraulic.pack.context.PackEventContext;
 import org.geysermc.hydraulic.pack.context.PackPostProcessContext;
 import org.geysermc.hydraulic.pack.context.PackPreProcessContext;
 import org.geysermc.hydraulic.storage.ModStorage;
+import org.geysermc.hydraulic.util.GeoUtil;
 import org.geysermc.hydraulic.util.PackUtil;
 import org.geysermc.hydraulic.util.SingletonBlockGetter;
 import org.geysermc.pack.bedrock.resource.BedrockResourcePack;
+import org.geysermc.pack.bedrock.resource.models.entity.ModelEntity;
 import org.geysermc.pack.converter.type.model.ModelStitcher;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -76,6 +78,7 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
 
     private final Map<String, StateDefinition> blockStates = new HashMap<>();
     private final Set<String> emptyModels = new HashSet<>();
+    private final Map<String, ModelEntity> shapeGeometries = new HashMap<>();
 
     public BlockPackModule() {
         this.listenOn(GeyserDefineCustomBlocksEvent.class, this::onDefineCustomBlocks);
@@ -146,7 +149,24 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                     continue;
                 }
 
-                emptyModels.add(key.toString());
+                if (!emptyModels.add(key.toString())) {
+                    continue;
+                }
+
+                // Blocks drawn by a block entity renderer -- chests, beds, signs,
+                // shulker boxes -- deliberately ship a model with no elements, since
+                // Java draws them from the renderer rather than from the model.
+                // Bedrock has no equivalent, so pointing these at the empty geometry
+                // leaves nothing to draw: the block shows up as an unknown block and
+                // can be seen through. Derive a geometry from the block's own shape
+                // instead. A block that really is shapeless still falls back to the
+                // empty geometry below.
+                BlockState defaultState = block.defaultBlockState();
+                VoxelShape shape = defaultState.getShape(new SingletonBlockGetter(defaultState), BlockPos.ZERO);
+                if (!shape.isEmpty()) {
+                    String geoName = geometryName(key);
+                    this.shapeGeometries.put(geoName, GeoUtil.fromShape(shape, geoName));
+                }
             }
         }
     }
@@ -154,6 +174,17 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
     private void postProcess(@NotNull PackPostProcessContext<BlockPackModule> context) {
         ResourcePack assets = context.javaResourcePack();
         BedrockResourcePack bedrockPack = context.bedrockResourcePack();
+
+        // Write out the geometries built for this mod's elements-less models.
+        // Keyed off this mod's own assets so a geometry is only ever written to
+        // the pack of the mod that owns the model.
+        for (Model model : assets.models()) {
+            String geoName = geometryName(model.key());
+            ModelEntity geometry = this.shapeGeometries.get(geoName);
+            if (geometry != null) {
+                bedrockPack.addBlockModel(geometry, geoName.substring(geoName.lastIndexOf('.') + 1) + ".json");
+            }
+        }
 
         for (Texture texture : assets.textures()) {
             Key key = texture.key();
@@ -233,13 +264,13 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
                         ));
 
                 if (!isUnitCube(model.parent())) {
-                    String namespace = key.namespace();
-                    String value = key.value();
+                    String geoName = geometryName(key);
 
-                    String geoKey = value.substring(value.lastIndexOf('/') + 1);
-                    String geoName = "geometry." + (namespace.equals(Key.MINECRAFT_NAMESPACE) ? "" : namespace + ".") + geoKey;
-
-                    if (emptyModels.contains(key.toString())) {
+                    // An empty model with a shape gets a geometry built from that
+                    // shape in preProcess, written out by postProcess under this
+                    // same name. Only a model with nothing to draw at all falls
+                    // back to the shared empty geometry.
+                    if (emptyModels.contains(key.toString()) && !this.shapeGeometries.containsKey(geoName)) {
                         context.logger().warn("Missing block model for block {}", blockLocation);
                         geoName = "geometry." + Constants.MOD_ID + ".empty";
                     }
@@ -602,6 +633,18 @@ public class BlockPackModule extends PackModule<BlockPackModule> {
         }
 
         return textures;
+    }
+
+    /**
+     * Get the Bedrock geometry identifier used for the given Java model.
+     *
+     * @param key the model key
+     * @return the geometry identifier
+     */
+    private static String geometryName(Key key) {
+        String value = key.value();
+        String geoKey = value.substring(value.lastIndexOf('/') + 1);
+        return "geometry." + (key.namespace().equals(Key.MINECRAFT_NAMESPACE) ? "" : key.namespace() + ".") + geoKey;
     }
 
     private boolean isUnitCube(Key parent) {
