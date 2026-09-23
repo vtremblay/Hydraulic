@@ -27,9 +27,9 @@ import java.util.Map;
  * Converts modded crossbows, which Bedrock draws from an attachable rather than
  * from the item's icon.
  * <p>
- * Modelled on the vanilla Bedrock crossbow, which steps through its frames with
- * {@code query.get_animation_frame}: standby, the three draw frames, then the
- * loaded arrow and loaded rocket.
+ * Follows the vanilla Bedrock crossbow's frames -- standby, the three draw
+ * frames, then loaded -- but counts them itself, since the query vanilla steps
+ * them with is only answered for the items the client already knows.
  */
 @AutoService(PackModule.class)
 public class CrossbowPackModule extends TexturePackModule<CrossbowPackModule> {
@@ -59,8 +59,18 @@ public class CrossbowPackModule extends TexturePackModule<CrossbowPackModule> {
     private static final Scripts ATTACHABLE_SCRIPTS = new Scripts();
 
     static {
+        // Vanilla steps the frames with query.get_animation_frame, which is
+        // "the current texture of the item" -- the client works it out, and it
+        // only does so for the items it knows. A custom crossbow is not one of
+        // them, so it stays on frame 0 and never animates. Count the frames the
+        // same way the bow does instead, and read the loaded state from
+        // query.item_is_charged, which is answered for any item.
         ATTACHABLE_SCRIPTS.preAnimation(new String[] {
-            "variable.charge_amount = math.clamp((query.main_hand_item_max_duration - (query.main_hand_item_use_duration - query.frame_alpha + 1.0)) / 10.0, 0.0, 1.0f);"
+            "variable.charge_amount = math.clamp((query.main_hand_item_max_duration - (query.main_hand_item_use_duration - query.frame_alpha + 1.0)) / 10.0, 0.0, 1.0f);",
+            "variable.total_frames = 3;",
+            "variable.step = variable.total_frames / 120;",
+            "variable.pull = query.is_using_item ? math.clamp((variable.pull ?? 0) + variable.step, 1, variable.total_frames) : 0;",
+            "variable.frame = query.item_is_charged ? 4 : variable.pull;"
         });
         ATTACHABLE_SCRIPTS.animate(List.of(
             Map.of("wield", "c.is_first_person"),
@@ -167,10 +177,10 @@ public class CrossbowPackModule extends TexturePackModule<CrossbowPackModule> {
                 "geometry.crossbow_rocket"
         });
 
-        crossbowCustomRenderController.geometry("array.crossbow_geo_frames[query.get_animation_frame]");
+        crossbowCustomRenderController.geometry("array.crossbow_geo_frames[math.floor(v.frame)]");
         crossbowCustomRenderController.materials().add(Map.of("*", "variable.is_enchanted ? material.enchanted : material.default"));
         crossbowCustomRenderController.textures(new String[] {
-                "array.crossbow_texture_frames[query.get_animation_frame]",
+                "array.crossbow_texture_frames[math.floor(v.frame)]",
                 "texture.enchanted"
         });
 
